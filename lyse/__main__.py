@@ -32,7 +32,7 @@ import pandas
 
 splash.update_text('importing labscript suite modules')
 
-from labscript_utils.ls_zprocess import ZMQServer, ProcessTree
+from labscript_utils.ls_zprocess import ZMQServer, ProcessTree, zmq_get
 import zprocess
 from labscript_utils.labconfig import LabConfig, save_appconfig, load_appconfig
 from labscript_utils.setup_logging import setup_logging
@@ -43,6 +43,7 @@ import labscript_utils.shared_drive as shared_drive
 from lyse.dataframe_utilities import (concat_with_padding,
                                       get_dataframe_from_shot,
                                       replace_with_padding)
+from lyse.cache_utilities import CacheServer, cache_port, caching_enabled, cache_timeout
 
 from qtutils.qt import QtCore, QtGui, QtWidgets
 from qtutils.qt.QtCore import pyqtSignal as Signal
@@ -221,17 +222,17 @@ class AnalysisRoutine(object):
         self.shortname = os.path.basename(self.filepath)
         self.model = model
         self.output_box_port = output_box_port
-        
+
         self.COL_ACTIVE = RoutineBox.COL_ACTIVE
         self.COL_STATUS = RoutineBox.COL_STATUS
         self.COL_NAME = RoutineBox.COL_NAME
         self.ROLE_FULLPATH = RoutineBox.ROLE_FULLPATH
-        
+
         self.error = False
         self.done = False
-        
+
         self.to_worker, self.from_worker, self.worker = self.start_worker()
-        
+
         # Make a row to put into the model:
         active_item =  QtGui.QStandardItem()
         active_item.setCheckable(True)
@@ -241,9 +242,9 @@ class AnalysisRoutine(object):
         name_item.setToolTip(self.filepath)
         name_item.setData(self.filepath, self.ROLE_FULLPATH)
         self.model.appendRow([active_item, info_item, name_item])
-            
+
         self.exiting = False
-        
+
     def start_worker(self):
         # Start a worker process for this analysis routine:
         worker_path = os.path.join(LYSE_DIR, 'analysis_subprocess.py')
@@ -253,12 +254,12 @@ class AnalysisRoutine(object):
             output_redirection_port=self.output_box_port,
             startup_timeout=30,
         )
-        
+
         to_worker, from_worker, worker = child_handles
         # Tell the worker what script it with be executing:
         to_worker.put(self.filepath)
         return to_worker, from_worker, worker
-        
+
     def do_analysis(self, filepath):
         self.to_worker.put(['analyse', filepath])
         signal, data = self.from_worker.get()
@@ -268,7 +269,7 @@ class AnalysisRoutine(object):
             return True, data
         else:
             raise ValueError('invalid signal %s'%str(signal))
-        
+
     @inmain_decorator()
     def set_status(self, status):
         index = self.get_row_index()
@@ -294,7 +295,7 @@ class AnalysisRoutine(object):
             self.error = False
         else:
             raise ValueError(status)
-        
+
     @inmain_decorator()
     def enabled(self):
         index = self.get_row_index()
@@ -303,7 +304,7 @@ class AnalysisRoutine(object):
             return False
         enabled_item = self.model.item(index, self.COL_ACTIVE)
         return (enabled_item.checkState() == QtCore.Qt.Checked)
-        
+
     def get_row_index(self):
         """Returns the row index for this routine's row in the model"""
         for row in range(self.model.rowCount()):
@@ -315,7 +316,7 @@ class AnalysisRoutine(object):
     def restart(self):
         # TODO set status to 'restarting' or an icon or something, and gray out the item?
         self.end_child(restart=True)
-        
+
     def remove(self):
         """End the child process and remove from the treeview"""
         self.end_child()
@@ -324,7 +325,7 @@ class AnalysisRoutine(object):
             # Already gone
             return
         self.model.removeRow(index)
-         
+
     def end_child(self, restart=False):
         self.to_worker.put(['quit', None])
         timeout_time = time.time() + 2
@@ -353,7 +354,7 @@ class AnalysisRoutine(object):
             app.output_box.output('%s worker terminated\n'%self.shortname, red=True)
         else:
             app.output_box.output('%s worker exited cleanly\n'%self.shortname)
-        
+
         # if analysis was running notify analysisloop that analysis has failed
         self.from_worker.put(('error', {}))
 
@@ -409,9 +410,9 @@ class TreeView(QtWidgets.QTreeView):
         self._double_click = False
         return result
 
-        
+
 class RoutineBox(object):
-    
+
     COL_ACTIVE = 0
     COL_STATUS = 1
     COL_NAME = 2
@@ -422,7 +423,7 @@ class RoutineBox(object):
     # This is how we will reorder the model's rows instead of
     # using remove/insert.
     ROLE_SORTINDEX = QtCore.Qt.UserRole + 2
-    
+
     def __init__(self, container, exp_config, filebox, from_filebox, to_filebox, output_box_port, multishot=False):
         self.multishot = multishot
         self.filebox = filebox
@@ -430,9 +431,9 @@ class RoutineBox(object):
         self.from_filebox = from_filebox
         self.to_filebox = to_filebox
         self.output_box_port = output_box_port
-        
-        self.logger = logging.getLogger('lyse.RoutineBox.%s'%('multishot' if multishot else 'singleshot'))  
-        
+
+        self.logger = logging.getLogger('lyse.RoutineBox.%s'%('multishot' if multishot else 'singleshot'))
+
         loader = UiLoader()
         loader.registerCustomWidget(TreeView)
         self.ui = loader.load(os.path.join(LYSE_DIR, 'routinebox.ui'))
@@ -447,7 +448,7 @@ class RoutineBox(object):
         self.header = HorizontalHeaderViewWithWidgets(self.model)
         self.ui.treeView.setHeader(self.header)
         self.ui.treeView.setModel(self.model)
-        
+
         active_item = QtGui.QStandardItem()
         active_item.setToolTip('Whether the analysis routine should run')
         status_item = QtGui.QStandardItem()
@@ -461,16 +462,16 @@ class RoutineBox(object):
         self.header.setWidget(self.COL_ACTIVE, self.select_all_checkbox)
         self.header.setStretchLastSection(True)
         self.select_all_checkbox.setTristate(False)
-        
+
         self.model.setHorizontalHeaderItem(self.COL_ACTIVE, active_item)
         self.model.setHorizontalHeaderItem(self.COL_STATUS, status_item)
         self.model.setHorizontalHeaderItem(self.COL_NAME, name_item)
         self.model.setSortRole(self.ROLE_SORTINDEX)
-        
+
         self.ui.treeView.resizeColumnToContents(self.COL_ACTIVE)
         self.ui.treeView.resizeColumnToContents(self.COL_STATUS)
         self.ui.treeView.setColumnWidth(self.COL_NAME, 200)
-        
+
         self.ui.treeView.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         # Make the actions for the context menu:
         self.action_set_selected_active = QtWidgets.QAction(
@@ -482,15 +483,15 @@ class RoutineBox(object):
         self.action_remove_selected = QtWidgets.QAction(
             QtGui.QIcon(':qtutils/fugue/minus'), 'Remove selected routines',  self.ui)
         self.last_opened_routine_folder = self.exp_config.get('paths', 'analysislib')
-        
+
         self.routines = []
-        
+
         self.connect_signals()
 
         self.analysis = threading.Thread(target = self.analysis_loop)
         self.analysis.daemon = True
         self.analysis.start()
-        
+
     def connect_signals(self):
         self.ui.toolButton_add_routines.clicked.connect(self.on_add_routines_clicked)
         self.ui.toolButton_remove_routines.clicked.connect(self.on_remove_selection)
@@ -550,7 +551,7 @@ class RoutineBox(object):
             routine = AnalysisRoutine(filepath, self.model, self.output_box_port, checked)
             self.routines.append(routine)
         self.update_select_all_checkstate()
-        
+
     def on_treeview_double_left_clicked(self, index):
         # If double clicking on the the name item, open
         # the routine in the specified text editor:
@@ -575,7 +576,7 @@ class RoutineBox(object):
         except Exception as e:
             error_dialog("Unable to launch text editor specified in %s. Error was: %s" %
                          (self.exp_config.config_path, str(e)))
-                         
+
     def on_remove_selection(self):
         self.remove_selection()
 
@@ -593,11 +594,11 @@ class RoutineBox(object):
                 routine.remove()
                 self.routines.remove(routine)
         self.update_select_all_checkstate()
-        
+
     def on_model_item_changed(self, item):
         if item.column() == self.COL_ACTIVE:
             self.update_select_all_checkstate()
-        
+
     def on_select_all_state_changed(self, state):
         with self.select_all_checkbox_state_changed_disconnected:
             # Do not allow a switch *to* a partially checked state:
@@ -607,7 +608,7 @@ class RoutineBox(object):
             for row in range(self.model.rowCount()):
                 active_item = self.model.item(row, self.COL_ACTIVE)
                 active_item.setCheckState(state)
-        
+
     def on_treeView_context_menu_requested(self, point):
         menu = QtWidgets.QMenu(self.ui.treeView)
         menu.addAction(self.action_set_selected_active)
@@ -615,7 +616,7 @@ class RoutineBox(object):
         menu.addAction(self.action_restart_selected)
         menu.addAction(self.action_remove_selected)
         menu.exec_(QtGui.QCursor.pos())
-        
+
     def on_set_selected_triggered(self, active):
         selected_indexes = self.ui.treeView.selectedIndexes()
         selected_rows = set(index.row() for index in selected_indexes)
@@ -639,7 +640,7 @@ class RoutineBox(object):
                 order.append(i_unselected)
                 i_unselected += 1
         self.reorder(order)
-        
+
     def on_move_up_clicked(self):
         selected_indexes = self.ui.treeView.selectedIndexes()
         selected_rows = set(index.row() for index in selected_indexes)
@@ -657,7 +658,7 @@ class RoutineBox(object):
                 last_unselected_index = i
                 order.append(i)
         self.reorder(order)
-        
+
     def on_move_down_clicked(self):
         selected_indexes = self.ui.treeView.selectedIndexes()
         selected_rows = set(index.row() for index in selected_indexes)
@@ -675,7 +676,7 @@ class RoutineBox(object):
                 last_unselected_index = i
                 order.insert(0, i)
         self.reorder(order)
-        
+
     def on_move_to_bottom_clicked(self):
         selected_indexes = self.ui.treeView.selectedIndexes()
         selected_rows = set(index.row() for index in selected_indexes)
@@ -691,7 +692,7 @@ class RoutineBox(object):
                 order.append(i_unselected)
                 i_unselected += 1
         self.reorder(order)
-        
+
     def on_restart_selected_triggered(self):
         selected_indexes = self.ui.treeView.selectedIndexes()
         selected_rows = set(index.row() for index in selected_indexes)
@@ -701,21 +702,21 @@ class RoutineBox(object):
             if routine.filepath in filepaths:
                 routine.restart()
         self.update_select_all_checkstate()
-       
+
     def analysis_loop(self):
         while True:
             filepath = self.from_filebox.get()
             if self.multishot:
                 assert filepath is None
-                # TODO: get the filepath of the output h5 file: 
+                # TODO: get the filepath of the output h5 file:
                 # filepath = self.filechooserentry.get_text()
             self.logger.info('got a file to process: %s'%filepath)
             self.do_analysis(filepath)
-    
+
     def todo(self):
         """How many analysis routines are not done?"""
         return len([r for r in self.routines if r.enabled() and not r.done])
-        
+
     def do_analysis(self, filepath):
         """Run all analysis routines once on the given filepath,
         which is a shot file if we are a singleshot routine box"""
@@ -759,7 +760,7 @@ class RoutineBox(object):
         else:
             self.to_filebox.put(['done', 100.0, {}])
         self.logger.debug('completed analysis of %s'%filepath)
-            
+
     def reorder(self, order):
         assert len(order) == len(set(order)), 'ordering contains non-unique elements'
         # Apply the reordering to the liststore:
@@ -914,7 +915,7 @@ class EditColumns(object):
             visible_item = self.model.item(row, self.COL_VISIBLE)
             self.update_visible_state(visible_item, state)
         self.do_sort()
-        
+
         self.filebox.set_columns_visible(self.columns_visible)
 
     def update_visible_state(self, item, state):
@@ -1103,8 +1104,8 @@ class TableView(QtWidgets.QTableView):
         self._pressed_index = None
         self._double_click = False
         return result
-        
-        
+
+
 class DataFrameModel(QtCore.QObject):
 
     COL_STATUS = 0
@@ -1112,7 +1113,7 @@ class DataFrameModel(QtCore.QObject):
 
     ROLE_STATUS_PERCENT = QtCore.Qt.UserRole + 1
     ROLE_DELETED_OFF_DISK = QtCore.Qt.UserRole + 2
-    
+
     columns_changed = Signal()
 
     def __init__(self, view, exp_config):
@@ -1176,7 +1177,7 @@ class DataFrameModel(QtCore.QObject):
 
         # Whether or not a deleted column was visible at the time it was deleted (by name):
         self.deleted_columns_visible = {}
-        
+
         # Make the actions for the context menu:
         self.action_remove_selected = QtWidgets.QAction(
             QtGui.QIcon(':qtutils/fugue/minus'), 'Remove selected shots',  self._view)
@@ -1201,10 +1202,20 @@ class DataFrameModel(QtCore.QObject):
         # Remove from DataFrame first:
         self.dataframe = self.dataframe.drop(index.row() for index in selected_indexes)
         self.dataframe.index = pandas.Index(range(len(self.dataframe)))
-        # Delete one at a time from Qt model:
+        # Delete one at a time from Qt model
+        # also delete any cached data for each shot from the web server's cache
+        filepaths = []
         for name_item in selected_name_items:
             row = name_item.row()
+            filepaths.append(self._model.item(row, self.COL_FILEPATH).text())
             self._model.removeRow(row)
+
+        if caching_enabled:
+            try:
+                zmq_get(cache_port, 'localhost', ('remove_shots', [], filepaths), cache_timeout)
+            except TimeoutError:
+                pass
+
         self.renumber_rows()
 
     def mark_selection_not_done(self):
@@ -1226,7 +1237,7 @@ class DataFrameModel(QtCore.QObject):
                 status_item.setToolTip(None)
 
             status_item.setData(0, self.ROLE_STATUS_PERCENT)
-        
+
     def on_view_context_menu_requested(self, point):
         menu = QtWidgets.QMenu(self._view)
         menu.addAction(self.action_remove_selected)
@@ -1235,7 +1246,7 @@ class DataFrameModel(QtCore.QObject):
     def on_double_click(self, index):
         filepath_item = self._model.item(index.row(), self.COL_FILEPATH)
         shot_filepath = filepath_item.text()
-        
+
         # get path to text editor
         viewer_path = self.exp_config.get('programs', 'hdf5_viewer')
         viewer_args = self.exp_config.get('programs', 'hdf5_viewer_arguments')
@@ -1253,7 +1264,7 @@ class DataFrameModel(QtCore.QObject):
         except Exception as e:
             error_dialog("Unable to launch hdf5 viewer specified in %s. Error was: %s" %
                          (self.exp_config.config_path, str(e)))
-        
+
     def set_columns_visible(self, columns_visible):
         self.columns_visible = columns_visible
         for column_index, visible in columns_visible.items():
@@ -1505,7 +1516,7 @@ class DataFrameModel(QtCore.QObject):
                 basename = os.path.splitext(os.path.basename(filepath))[0]
                 vert_header_text += basename
             vertical_header_item.setText(vert_header_text)
-    
+
     @inmain_decorator()
     def add_files(self, filepaths, new_row_data, done=False):
         """Add files to the dataframe model. New_row_data should be a
@@ -1545,7 +1556,7 @@ class DataFrameModel(QtCore.QObject):
         # Update the Qt model:
         for filepath in to_add:
             self.update_row(filepath, dataframe_already_updated=True)
-            
+
 
     @inmain_decorator()
     def get_first_incomplete(self):
@@ -1556,8 +1567,8 @@ class DataFrameModel(QtCore.QObject):
             if status_item.data(self.ROLE_STATUS_PERCENT) != 100:
                 filepath_item = self._model.item(row, self.COL_FILEPATH)
                 return filepath_item.text()
-        
-        
+
+
 class FileBox(object):
 
     def __init__(self, container, exp_config, to_singleshot, from_singleshot, to_multishot, from_multishot):
@@ -1586,7 +1597,7 @@ class FileBox(object):
 
         self.analysis_paused = False
         self.multishot_required = False
-        
+
         # An Event to let the analysis thread know to check for shots that
         # need analysing, rather than using a time.sleep:
         self.analysis_pending = threading.Event()
@@ -1618,7 +1629,7 @@ class FileBox(object):
         self.ui.pushButton_analysis_running.toggled.connect(self.on_analysis_running_toggled)
         self.ui.pushButton_mark_as_not_done.clicked.connect(self.on_mark_selection_not_done_clicked)
         self.ui.pushButton_run_multishot_analysis.clicked.connect(self.on_run_multishot_analysis_clicked)
-        
+
     def on_edit_columns_clicked(self):
         self.edit_columns_dialog.show()
 
@@ -1657,16 +1668,16 @@ class FileBox(object):
             self.ui.pushButton_analysis_running.setIcon(QtGui.QIcon(':qtutils/fugue/control'))
             self.ui.pushButton_analysis_running.setText('Analysis running')
             self.analysis_pending.set()
-     
+
     def on_mark_selection_not_done_clicked(self):
         self.shots_model.mark_selection_not_done()
         # Let the analysis loop know to look for these shots:
         self.analysis_pending.set()
-        
+
     def on_run_multishot_analysis_clicked(self):
         self.multishot_required = True
         self.analysis_pending.set()
-        
+
     def set_columns_visible(self, columns_visible):
         self.shots_model.set_columns_visible(columns_visible)
 
@@ -1709,7 +1720,7 @@ class FileBox(object):
                     # Wait momentarily in case more arrive so we can batch process them:
                     time.sleep(0.1)
                 # Batch process to decrease number of dataframe concatenations:
-                batch_size = len(self.shots_model.dataframe) // 3 + 1 
+                batch_size = len(self.shots_model.dataframe) // 3 + 1
                 while True:
                     try:
                         filepath = self.incoming_queue.get(False)
@@ -1759,7 +1770,7 @@ class FileBox(object):
                 if shots_remaining == 0:
                     self.set_add_shots_progress(n_shots_added, total_shots, None)
                     n_shots_added = 0 # reset our counter for the next batch
-                
+
             except Exception:
                 # Keep this incoming loop running at all costs, but make the
                 # otherwise uncaught exception visible to the user:
@@ -1809,13 +1820,13 @@ class FileBox(object):
                 # Raise the exception in a thread so we can keep running
                 zprocess.raise_exception_in_thread((RuntimeError, RuntimeError(message), tb))
                 self.pause_analysis()
-            
-   
+
+
     @inmain_decorator()
     def pause_analysis(self):
         # This automatically triggers the slot that sets self.analysis_paused
         self.ui.pushButton_analysis_running.setChecked(True)
-        
+
     def do_singleshot_analysis(self, filepath):
         # Check the shot file exists before sending it to the singleshot
         # routinebox. This does not guarantee it won't have been deleted by
@@ -1850,7 +1861,7 @@ class FileBox(object):
             if signal == 'progress':
                 continue
             raise ValueError('invalid signal %s' % str(signal))
-                        
+
     def do_multishot_analysis(self):
         self.to_multishot.put(None)
         while True:
@@ -1863,8 +1874,8 @@ class FileBox(object):
             elif signal == 'error':
                 self.pause_analysis()
                 return
-        
-        
+
+
 class Lyse(object):
 
     def __init__(self):
@@ -2039,12 +2050,12 @@ class Lyse(object):
 
         box = self.singleshot_routinebox
         save_data['singleshot'] = list(zip([routine.filepath for routine in box.routines],
-                                           [box.model.item(row, box.COL_ACTIVE).checkState() 
+                                           [box.model.item(row, box.COL_ACTIVE).checkState()
                                             for row in range(box.model.rowCount())]))
         save_data['lastsingleshotfolder'] = box.last_opened_routine_folder
         box = self.multishot_routinebox
         save_data['multishot'] = list(zip([routine.filepath for routine in box.routines],
-                                          [box.model.item(row, box.COL_ACTIVE).checkState() 
+                                          [box.model.item(row, box.COL_ACTIVE).checkState()
                                            for row in range(box.model.rowCount())]))
         save_data['lastmultishotfolder'] = box.last_opened_routine_folder
 
@@ -2212,7 +2223,7 @@ class Lyse(object):
         # forward slashes:
         file = os.path.abspath(file)
         df = pandas.read_msgpack(file).sort_values("run time").reset_index()
-                
+
         # Check for changes in the shot files since the dataframe was exported
         def changed_since(filepath, time):
             if os.path.isfile(filepath):
@@ -2230,7 +2241,7 @@ class Lyse(object):
             filepath = filepaths.pop(index)
             self.filebox.incoming_queue.put(filepath)
         df = df.drop(need_updating)
-        
+
         self.filebox.shots_model.add_files(filepaths, df, done=True)
 
     def delete_items(self, confirm):
@@ -2257,6 +2268,8 @@ if __name__ == "__main__":
     # Start the web server:
     splash.update_text('starting analysis server')
     server = WebServer(app.port)
+    cache_server = CacheServer(cache_port)
+
     splash.update_text('done')
     # Let the interpreter run every 500ms so it sees Ctrl-C interrupts:
     timer = QtCore.QTimer()
@@ -2264,7 +2277,8 @@ if __name__ == "__main__":
     timer.timeout.connect(lambda: None)  # Let the interpreter run each 500 ms.
     # Upon seeing a ctrl-c interrupt, quit the event loop
     signal.signal(signal.SIGINT, lambda *args: qapplication.exit())
-    
+
     splash.hide()
     qapplication.exec_()
     server.shutdown()
+    cache_server.shutdown()

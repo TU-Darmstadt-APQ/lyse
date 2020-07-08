@@ -26,6 +26,7 @@ import pandas
 from numpy import array, ndarray
 import types
 
+from lyse.cache_utilities import cache_timeout, cache_port, caching_enabled
 from .__version__ import __version__
 
 from labscript_utils import dedent
@@ -46,7 +47,7 @@ _plot_classes = {}
 Plot=object
 # An empty dictionary of plots (overwritten by the analysis worker if running within lyse)
 plots = {}
-# A threading.Event to delay the 
+# A threading.Event to delay the
 delay_event = threading.Event()
 # a flag to determine whether we should wait for the delay event
 _delay_flag = False
@@ -97,10 +98,10 @@ def data(filepath=None, host='localhost', port=_lyse_port, timeout=5):
             pass
         df.sort_index(inplace=True)
         return df
-        
+
 def globals_diff(run1, run2, group=None):
     return dict_diff(run1.get_globals(group), run2.get_globals(group))
- 
+
 class Run(object):
     def __init__(self,h5_path,no_write=False):
         self.no_write = no_write
@@ -108,7 +109,7 @@ class Run(object):
         self.h5_path = h5_path
         if not self.no_write:
             self._create_group_if_not_exists(h5_path, '/', 'results')
-                     
+
         try:
             if not self.no_write:
                 # The group were this run's results will be stored in the h5 file
@@ -125,15 +126,15 @@ class Run(object):
             # 'the filename of your script, but since you\'re in interactive '
             # 'mode, there is no scipt name. Opening in read only mode for '
             # 'the moment.\n')
-            
+
             # Backup the value of self.no_write for restoration once the group
             # is set
             self._no_group = (True, self.no_write)
             self.no_write = True
-            
+
     def _create_group_if_not_exists(self, h5_path, location, groupname):
         """Creates a group in the HDF5 file at `location` if it does not exist.
-        
+
         Only opens the h5 file in write mode if a group must be created.
         This ensures the last modified time of the file is only updated if
         the file is actually written to."""
@@ -159,7 +160,7 @@ class Run(object):
                 return list(h5_file['data']['traces'].keys())
             except KeyError:
                 return []
-                
+
     def get_attrs(self, group):
         """Returns all attributes of the specified group as a dictionary."""
         with h5py.File(self.h5_path, 'r') as h5_file:
@@ -172,7 +173,7 @@ class Run(object):
             if not name in h5_file['data']['traces']:
                 raise Exception('The trace \'%s\' doesn not exist'%name)
             trace = h5_file['data']['traces'][name]
-            return array(trace['t'],dtype=float),array(trace['values'],dtype=float)         
+            return array(trace['t'],dtype=float),array(trace['values'],dtype=float)
 
     def get_result_array(self,group,name):
         with h5py.File(self.h5_path, 'r') as h5_file:
@@ -181,9 +182,9 @@ class Run(object):
             if not name in h5_file['results'][group]:
                 raise Exception('The result array \'%s\' doesn not exist'%name)
             return array(h5_file['results'][group][name])
-            
+
     def get_result(self, group, name):
-        """Return 'result' in 'results/group' that was saved by 
+        """Return 'result' in 'results/group' that was saved by
         the save_result() method."""
         with h5py.File(self.h5_path, 'r') as h5_file:
             if not group in h5_file['results']:
@@ -191,17 +192,17 @@ class Run(object):
             if not name in h5_file['results'][group].attrs.keys():
                 raise Exception('The result \'%s\' does not exist'%name)
             return get_attribute(h5_file['results'][group], name)
-            
+
     def get_results(self, group, *names):
         """Iteratively call get_result(group,name) for each name provided.
         Returns a list of all results in same order as names provided."""
         results = []
         for name in names:
             results.append(self.get_result(group,name))
-        return results        
-            
+        return results
+
     def save_result(self, name, value, group=None, overwrite=True):
-        """Save a result to h5 file. Defaults are to save to the active group 
+        """Save a result to h5 file. Defaults are to save to the active group
         in the 'results' group and overwrite an existing result.
         Note that the result is saved as an attribute of 'results/group' and
         overwriting attributes causes h5 file size bloat."""
@@ -217,12 +218,12 @@ class Run(object):
                 group = 'results/' + self.group
             elif not group in h5_file:
                 # Create the group if it doesn't exist
-                h5_file.create_group(group) 
+                h5_file.create_group(group)
             if name in h5_file[group].attrs and not overwrite:
                 raise Exception('Attribute %s exists in group %s. ' \
-                                'Use overwrite=True to overwrite.' % (name, group))                   
+                                'Use overwrite=True to overwrite.' % (name, group))
             set_attributes(h5_file[group], {name: value})
-            
+
         if spinning_top:
             if self.h5_path not in _updated_data:
                 _updated_data[self.h5_path] = {}
@@ -230,9 +231,9 @@ class Run(object):
                 toplevel = group.replace('results/', '', 1)
                 _updated_data[self.h5_path][toplevel, name] = value
 
-    def save_result_array(self, name, data, group=None, 
+    def save_result_array(self, name, data, group=None,
                           overwrite=True, keep_attrs=False, **kwargs):
-        """Save data array to h5 file. Defaults are to save to the active 
+        """Save data array to h5 file. Defaults are to save to the active
         group in the 'results' group and overwrite existing data.
         Additional keyword arguments are passed directly to h5py.create_dataset()."""
         if self.no_write:
@@ -248,7 +249,7 @@ class Run(object):
                 group = 'results/' + self.group
             elif not group in h5_file:
                 # Create the group if it doesn't exist
-                h5_file.create_group(group) 
+                h5_file.create_group(group)
             if name in h5_file[group]:
                 if overwrite:
                     # Overwrite if dataset already exists
@@ -256,7 +257,7 @@ class Run(object):
                         attrs = dict(h5_file[group][name].attrs)
                     del h5_file[group][name]
                 else:
-                    raise Exception('Dataset %s exists. Use overwrite=True to overwrite.' % 
+                    raise Exception('Dataset %s exists. Use overwrite=True to overwrite.' %
                                      group + '/' + name)
             h5_file[group].create_dataset(name, data=data, **kwargs)
             for key, val in attrs.items():
@@ -267,13 +268,13 @@ class Run(object):
         for name in names:
             traces.extend(self.get_trace(name))
         return traces
-             
+
     def get_result_arrays(self, group, *names):
         results = []
         for name in names:
             results.append(self.get_result_array(group, name))
         return results
-        
+
     def save_results(self, *args, **kwargs):
         """Iteratively call save_result() on multiple results.
         Assumes arguments are ordered such that each result to be saved is
@@ -284,7 +285,7 @@ class Run(object):
         for name, value in zip(names, values):
             print('saving %s =' % name, value)
             self.save_result(name, value, **kwargs)
-            
+
     def save_results_dict(self, results_dict, uncertainties=False, **kwargs):
         for name, value in results_dict.items():
             if not uncertainties:
@@ -294,16 +295,25 @@ class Run(object):
                 self.save_result('u_' + name, value[1], **kwargs)
 
     def save_result_arrays(self, *args, **kwargs):
-        """Iteratively call save_result_array() on multiple data sets. 
-        Assumes arguments are ordered such that each dataset to be saved is 
-        preceeded by the name to save it as. 
+        """Iteratively call save_result_array() on multiple data sets.
+        Assumes arguments are ordered such that each dataset to be saved is
+        preceeded by the name to save it as.
         All keyword arguments are passed to each call of save_result_array()."""
         names = args[::2]
         values = args[1::2]
         for name, value in zip(names, values):
             self.save_result_array(name, value, **kwargs)
-    
+
     def get_image(self,orientation,label,image):
+        if caching_enabled:
+            try:
+                img = zmq_get(cache_port, 'localhost', ('get', ['images', orientation, label, image, self.h5_path], None), cache_timeout)
+            except TimeoutError:
+                img = None
+
+            if img is not None:
+                return img
+
         with h5py.File(self.h5_path, 'r') as h5_file:
             if not 'images' in h5_file:
                 raise Exception('File does not contain any images')
@@ -313,21 +323,27 @@ class Run(object):
                 raise Exception('File does not contain any images with label \'%s\''%label)
             if not image in h5_file['images'][orientation][label]:
                 raise Exception('Image \'%s\' not found in file'%image)
-            return array(h5_file['images'][orientation][label][image])
-    
+            img = array(h5_file['images'][orientation][label][image])
+            if caching_enabled:
+                try:
+                    zmq_get(cache_port, 'localhost', ('set', ['images', orientation, label, image, self.h5_path], img), cache_timeout)
+                except TimeoutError:
+                    pass
+            return img
+
     def get_images(self,orientation,label, *images):
         results = []
         for image in images:
             results.append(self.get_image(orientation,label,image))
         return results
-        
+
     def get_all_image_labels(self):
         images_list = {}
         with h5py.File(self.h5_path, 'r') as h5_file:
             for orientation in h5_file['/images'].keys():
-                images_list[orientation] = list(h5_file['/images'][orientation].keys())               
-        return images_list                
-    
+                images_list[orientation] = list(h5_file['/images'][orientation].keys())
+        return images_list
+
     def get_image_attributes(self, orientation):
         with h5py.File(self.h5_path, 'r') as h5_file:
             if not 'images' in h5_file:
@@ -358,7 +374,7 @@ class Run(object):
             else:
                 globals_dict = dict(h5_file['globals'][group].attrs)
         return globals_dict
-        
+
     # def iterable_globals(self, group=None):
         # raw_globals = self.get_globals_raw(group)
         # print raw_globals.items()
@@ -376,12 +392,12 @@ class Run(object):
                # # print global_name + ' is iterable.'
                # # iterable_globals[global_name] = [tuple(value)]
             # # elif isinstance(value, ndarray) or  isinstance(value, list):
-               # # print global_name + ' is iterable.'            
+               # # print global_name + ' is iterable.'
                # # iterable_globals[global_name] = value
             # # else:
                 # # print global_name + ' is not iterable.'
             # return raw_globals
-            
+
     def get_globals_expansion(self):
         expansion_dict = {}
         def append_expansion(name, obj):
@@ -393,7 +409,7 @@ class Run(object):
         with h5py.File(self.h5_path, 'r') as h5_file:
             h5_file['globals'].visititems(append_expansion)
         return expansion_dict
-                   
+
     def get_units(self, group=None):
         units_dict = {}
         def append_units(name, obj):
@@ -410,12 +426,12 @@ class Run(object):
             try:
                 return list(h5_file['globals'].keys())
             except KeyError:
-                return []   
-                
+                return []
+
     def globals_diff(self, other_run, group=None):
-        return globals_diff(self, other_run, group)            
-    
-        
+        return globals_diff(self, other_run, group)
+
+
 class Sequence(Run):
     def __init__(self, h5_path, run_paths, no_write=False):
         if isinstance(run_paths, pandas.DataFrame):
@@ -424,9 +440,9 @@ class Sequence(Run):
         self.no_write = no_write
         if not self.no_write:
             self._create_group_if_not_exists(h5_path, '/', 'results')
-                 
+
         self.runs = {path: Run(path,no_write=True) for path in run_paths}
-        
+
         # The group were the results will be stored in the h5 file will
         # be the name of the python script which is instantiating this
         # Sequence object:
@@ -444,21 +460,41 @@ class Sequence(Run):
             'mode, there is no scipt name. Opening in read only mode for '
             'the moment.\n')
             self.no_write = True
-        
+
     def get_trace(self,*args):
         return {path:run.get_trace(*args) for path,run in self.runs.items()}
-        
+
     def get_result_array(self,*args):
         return {path:run.get_result_array(*args) for path,run in self.runs.items()}
-         
+
     def get_traces(self,*args):
         raise NotImplementedError('If you want to use this feature please ask me to implement it! -Chris')
-             
+
     def get_result_arrays(self,*args):
         raise NotImplementedError('If you want to use this feature please ask me to implement it! -Chris')
-     
+
     def get_image(self,*args):
-        raise NotImplementedError('If you want to use this feature please ask me to implement it! -Chris')     
+        if caching_enabled:
+            try:
+                cached_images = zmq_get(cache_port, 'localhost', ('get', ['images'] + list(args), None), cache_timeout)
+            except TimeoutError:
+                cached_images = None
+        else:
+            cached_images = None
+
+        if cached_images is not None:
+            too_many = set(cached_images.keys()) - set(self.runs.keys())
+            for filepath in too_many:
+                del cached_images[filepath]
+            missing = set(self.runs.keys()) - set(cached_images.keys())
+        else:
+            cached_images = {}
+            missing = self.runs.keys()
+
+        for filepath in missing:
+            cached_images[filepath] = self.runs[filepath].get_image(*args)
+
+        return cached_images
 
 
 def figure_to_clipboard(figure=None, **kwargs):
@@ -468,14 +504,14 @@ def figure_to_clipboard(figure=None, **kwargs):
     resulting file. Any keyword arguments will be passed to the call to
     savefig(). If bbox_inches keyword arg is not provided,
     bbox_inches='tight' will be used"""
-    
+
     import matplotlib.pyplot as plt
     from zprocess import start_daemon
     import tempfile
 
     if not 'bbox_inches' in kwargs:
         kwargs['bbox_inches'] = 'tight'
-               
+
     if figure is None:
         figure = plt.gcf()
 
@@ -502,7 +538,7 @@ def get_plot_class(identifier):
 def delay_results_return():
     global _delay_flag
     if not spinning_top:
-        msg = """Warning: lyse.delay_results_return has no effect on scripts not run 
+        msg = """Warning: lyse.delay_results_return has no effect on scripts not run
             with the lyse GUI.
             """
         sys.stderr.write(dedent(msg))
