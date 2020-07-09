@@ -16,7 +16,8 @@ caching_enabled = True
 cache_timeout = 1
 cache_port = 16589
 
-from zprocess import ZMQServer
+from labscript_utils.ls_zprocess import ZMQServer
+
 
 class CacheServer(ZMQServer):
     def __init__(self, *args, **kwargs):
@@ -28,10 +29,10 @@ class CacheServer(ZMQServer):
             dic = self.storage
 
         if not isinstance(filepaths, list):
-            filepaths = [filepaths] 
+            filepaths = [filepaths]
 
         # find toplevel keys and delet them
-        list(map(dic.__delitem__, filter(dic.__contains__,filepaths)))
+        list(map(dic.__delitem__, filter(dic.__contains__, filepaths)))
 
         # recursivly search the rest
         for k in list(dic.keys()):
