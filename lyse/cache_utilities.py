@@ -41,8 +41,12 @@ class CacheServer(ZMQServer):
 
     def handler(self, request_data):
         # logger.info('CacheServer request: %s' % str(request_data))
+        print('CacheServer request: %s' % str(request_data))
         if isinstance(request_data, tuple):
             command, keys, data = request_data
+
+            if len(keys) == 0:
+                return None
 
             storage = self.storage
             if len(keys) > 1:
@@ -66,7 +70,7 @@ class CacheServer(ZMQServer):
             elif command == "del":
                 try:
                     del storage[keys[-1]]
-                except KeyError and IndexError:
+                except (KeyError, IndexError):
                     return False
                 return True
 
